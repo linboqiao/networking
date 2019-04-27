@@ -1,6 +1,5 @@
-
-N2N_VERSION=2.1.0
-N2N_OSNAME=$(shell uname -p)
+N2N_VERSION=2.3.0
+N2N_OSNAME=$(shell uname)
 
 ########
 
@@ -17,11 +16,11 @@ N2N_DEFINES=
 N2N_OBJS_OPT=
 LIBS_EDGE_OPT=
 
-N2N_OPTION_AES?="yes"
-#N2N_OPTION_AES=no
+#N2N_OPTION_AES?="yes"
+N2N_OPTION_AES=no
 
 ifeq ($(N2N_OPTION_AES), "yes")
-    N2N_DEFINES+="-DN2N_HAVE_AES"
+    N2N_DEFINES+=-DN2N_HAVE_AES
     LIBS_EDGE_OPT+=-lcrypto
 endif
 
@@ -43,10 +42,12 @@ MAN1DIR=$(MANDIR)/man1
 MAN7DIR=$(MANDIR)/man7
 MAN8DIR=$(MANDIR)/man8
 
-N2N_LIB=n2n.a
+N2N_LIB=libn2n.a
 N2N_OBJS=n2n.o n2n_keyfile.o wire.o minilzo.o twofish.o \
+	 edge_utils.o \
          transform_null.o transform_tf.o transform_aes.o \
-         tuntap_freebsd.o tuntap_netbsd.o tuntap_linux.o tuntap_osx.o version.o
+         tuntap_freebsd.o tuntap_netbsd.o tuntap_linux.o \
+	 tuntap_osx.o version.o
 LIBS_EDGE+=$(LIBS_EDGE_OPT)
 LIBS_SN=
 
@@ -58,10 +59,11 @@ endif
 
 APPS=edge
 APPS+=supernode
+APPS+=example_edge_embed
 
-DOCS=edge.8.gz supernode.1.gz n2n_v2.7.gz
+DOCS=edge.8.gz supernode.1.gz n2n.7.gz
 
-all: $(APPS) $(DOCS)
+all: $(APPS) $(DOCS) benchmark
 
 edge: edge.c $(N2N_LIB) n2n_wire.h n2n.h Makefile
 	$(CC) $(CFLAGS) edge.c $(N2N_LIB) $(LIBS_EDGE) -o edge
@@ -74,6 +76,9 @@ supernode: sn.c $(N2N_LIB) n2n.h Makefile
 
 benchmark: benchmark.c $(N2N_LIB) n2n_wire.h n2n.h Makefile
 	$(CC) $(CFLAGS) benchmark.c $(N2N_LIB) $(LIBS_SN) -o benchmark
+
+example_edge_embed: example_edge_embed.c $(N2N_LIB) n2n.h
+	$(CC) $(CFLAGS) example_edge_embed.c $(N2N_LIB) $(LIBS_EDGE) -o example_edge_embed
 
 .c.o: n2n.h n2n_keyfile.h n2n_transforms.h n2n_wire.h twofish.h Makefile
 	$(CC) $(CFLAGS) -c $<
@@ -91,11 +96,56 @@ version.o: Makefile
 clean:
 	rm -rf $(N2N_OBJS) $(N2N_LIB) $(APPS) $(DOCS) test *.dSYM *~
 
-install: edge supernode edge.8.gz supernode.1.gz n2n_v2.7.gz
+install: edge supernode edge.8.gz supernode.1.gz n2n.7.gz
 	echo "MANDIR=$(MANDIR)"
 	$(MKDIR) $(SBINDIR) $(MAN1DIR) $(MAN7DIR) $(MAN8DIR)
 	$(INSTALL_PROG) supernode $(SBINDIR)/
 	$(INSTALL_PROG) edge $(SBINDIR)/
 	$(INSTALL_DOC) edge.8.gz $(MAN8DIR)/
 	$(INSTALL_DOC) supernode.1.gz $(MAN1DIR)/
-	$(INSTALL_DOC) n2n_v2.7.gz $(MAN7DIR)/
+	$(INSTALL_DOC) n2n.7.gz $(MAN7DIR)/
+
+# Docker builder section
+DOCKER_IMAGE_NAME=supermock/supernode
+DOCKER_IMAGE_VERSION=v$(N2N_VERSION)
+
+pre_platforms:
+	if [ ! "$(N2N_COMMIT_HASH)" = "" ]; then \
+		echo -n "Are you sure you want to build the hash commit, with the version 2.3 tag, if it is not right, change the N2N_VERSION environment variable in the Makefile. (y/n) " && read sure && [ $$sure == y ]; \
+	fi
+
+platforms: pre_platforms
+	if [ "$(TARGET_ARCHITECTURE)" = "arm32v7" ] || [ "$(TARGET_ARCHITECTURE)" = "" ]; then DOCKER_IMAGE_FILENAME="Dockerfile.arm32v7" DOCKER_IMAGE_TAGNAME=$(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)-arm32v7 make build; fi
+	if [ "$(TARGET_ARCHITECTURE)" = "x86_64" ] || [ "$(TARGET_ARCHITECTURE)" = "" ]; then DOCKER_IMAGE_FILENAME="Dockerfile.x86_64" DOCKER_IMAGE_TAGNAME=$(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)-x86_64 make build; fi
+
+build:
+	$(eval OS := $(shell uname -s))
+	$(eval ARCHITECTURE := $(shell export DOCKER_IMAGE_TAGNAME="$(DOCKER_IMAGE_TAGNAME)"; echo $$DOCKER_IMAGE_TAGNAME | grep -oe -.*))
+
+	docker build --target builder --build-arg COMMIT_HASH=$(N2N_COMMIT_HASH) -t $(DOCKER_IMAGE_TAGNAME) -f image-platforms/$(DOCKER_IMAGE_FILENAME) .
+
+	docker container create --name n2n-builder $(DOCKER_IMAGE_TAGNAME)
+	if [ ! -d "./build" ]; then mkdir ./build; fi
+	docker container cp n2n-builder:/usr/src/n2n/supernode ./build/supernode-$(OS)$(ARCHITECTURE)
+	docker container cp n2n-builder:/usr/src/n2n/edge ./build/edge-$(OS)$(ARCHITECTURE)
+	docker container rm -f n2n-builder
+
+	docker build --cache-from $(DOCKER_IMAGE_TAGNAME) \
+		--build-arg COMMIT_HASH=$(N2N_COMMIT_HASH) \
+		-t $(DOCKER_IMAGE_TAGNAME) \
+		-t $(DOCKER_IMAGE_NAME):latest$(ARCHITECTURE) \
+		-f image-platforms/$(DOCKER_IMAGE_FILENAME) .
+
+pre_push:
+	if [ "$(TARGET_ARCHITECTURE)" = "" ]; then \
+		echo "Please pass TARGET_ARCHITECTURE, see README.md."; \
+		exit 1; \
+	fi
+
+push: pre_push
+	docker push $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)-$(TARGET_ARCHITECTURE)
+	docker push $(DOCKER_IMAGE_NAME):latest-$(TARGET_ARCHITECTURE)
+
+.PHONY: pre_platforms platforms build pre_push push
+.SILENT: pre_platforms pre_push
+# End Docker builder section

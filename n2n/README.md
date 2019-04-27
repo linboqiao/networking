@@ -1,5 +1,4 @@
-
-
+# N2N
 
 Edge node
 ---------
@@ -7,33 +6,28 @@ Edge node
 You need to start an edge node on each host you want to connect with the *same*
 community.
 
-0. become root
+Enable the edge process
 
-1. create tun device: `$ tunctl -t tun0`
+```sh
+$ sudo ./edge -d n2n0 -c mynetwork -k encryptme -u 99 -g 99 -m 3C:A0:12:34:56:78 -a 1.2.3.4 -l a.b.c.d:xyw
+```
 
-2. enable the edge process
-```
-$ ./edge -d n2n0 -c mynetwork -k encryptme -u 99 -g 99 -m 3C:A0:12:34:56:78 -a 1.2.3.4 -l a.b.c.d:xyw
-```
 or
-```
-$ N2N_KEY=encryptme ./edge -d n2n0 -c mynetwork -u 99 -g 99 -m 3C:A0:12:34:56:78 -a 1.2.3.4 -l a.b.c.d:xyw
+
+```sh
+$ N2N_KEY=encryptme sudo ./edge -d n2n0 -c mynetwork -u 99 -g 99 -m 3C:A0:12:34:56:78 -a 1.2.3.4 -l a.b.c.d:xyw
 ```
 
-Once you have this worked out, you can add the `-f` option to make edge detach
-and run as a daemon.
+By defaul the edge will run in background but you can use the `-f` option to keep it in foreground.
 
 Note that `-d`, `-u`, `-g` and `-f` options are not available for Windows.
-
 
 Supernode
 --------
 
-You need to start the supernode once
+You need to start the supernode once (no need to be root unless you want to use a privileged port)
 
 1. `./supernode -l 1234 -v`
-
-
 
 Dropping Root Privileges and SUID-Root Executables (UNIX)
 --------------------------------------------------
@@ -57,7 +51,7 @@ safe if your host has only one login user.
 
 
 Running As a Daemon (UNIX)
--------------------
+--------------------------
 
 Unless given `-f` as a command line option, edge will call daemon(3) after
 successful setup. This causes the process to fork a child which closes stdin,
@@ -114,6 +108,44 @@ AES  (-O3) 12532
 TF   (-O3) 14046
 NULL (-O3) 10659
 
-(C) 2007-2010 - Luca Deri <deri@ntop.org> and Richard Andrews <andrews@ntop.org>
+# N2N Builder (Supernode Docker Image based on Debian)
 
-(C) 2016 - ntop
+## Running the supernode image
+
+```sh
+$ docker run --rm -d -p 5645:5645/udp -p 7654:7654/udp supermock/supernode:[TAGNAME]
+```
+
+## Docker registry
+
+- [DockerHub](https://hub.docker.com/r/supermock/supernode/)
+- [DockerStore](https://store.docker.com/community/images/supermock/supernode/)
+
+## Documentation
+
+### 1. Build image and binaries
+
+Use `make` command to build the images. Before starting the arm32v7 platform build, you need to run this registry, so you can perform a cross-build. Just follow the documentation: https://github.com/multiarch/qemu-user-static/blob/master/README.md
+
+```sh
+$ N2N_COMMIT_HASH=[(optional)] TARGET_ARCHITECTURE=[arm32v7, x86_64, (nothing to build all architectures)] make platforms
+```
+
+### 2. Push it
+
+Use `make push` command to push the image, TARGET_ARCHITECTURE is necessary.
+
+```sh
+$ TARGET_ARCHITECTURE=[arm32v7, x86_64] make push
+```
+
+### 3. Test it
+
+Once the image is built, it's ready to run:
+
+```sh
+$ docker run --rm -d -p 5645:5645/udp -p 7654:7654/udp supermock/supernode:[TAGNAME]
+```
+
+-----------------
+(C) 2007-2018 - ntop.org and contributors
